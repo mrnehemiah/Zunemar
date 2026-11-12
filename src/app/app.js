@@ -1,5 +1,6 @@
 import {header,bottomNav,footer} from "../components/layout.js";
-import {toast,refreshIcons,modal,icon,escapeHTML,money} from "../components/ui.js";
+import {bindGuideSliders} from "../components/guide-slider.js";
+import {toast,refreshIcons,modal,icon,escapeHTML} from "../components/ui.js";
 import {homePage} from "../pages/home.page.js";
 import {categoriesPage} from "../pages/categories.page.js";
 import {authPage} from "../pages/auth.page.js";
@@ -18,9 +19,9 @@ import {productPage} from "../pages/product.page.js";
 import {verificationPage} from "../pages/verification.page.js";
 import {helpPage} from "../pages/help.page.js";
 import {legalPage} from "../pages/legal.page.js";
-import {getSession,signUp,signIn,signOut,resetPassword,onAuthChange} from "../services/auth.service.js";
+import {getSession,signUp,signIn,signOut,resetPassword,updatePassword,signOutAll,onAuthChange} from "../services/auth.service.js";
 import {getProfile,updateProfile} from "../services/profile.service.js";
-import {getProducts,getProduct,createProduct,deleteProduct} from "../services/products.service.js";
+import {getProducts,createProduct,deleteProduct} from "../services/products.service.js";
 import {getSellerApplication,submitSellerApplication} from "../services/seller.service.js";
 import {getCart,addToCart,removeCartItem,clearCart} from "../services/cart.service.js";
 import {getWishlist,toggleWishlist} from "../services/wishlist.service.js";
@@ -28,9 +29,9 @@ import {getOrders,placeOrder} from "../services/orders.service.js";
 import {getConversations,startConversation,getConversationMessages,sendMessage} from "../services/messaging.service.js";
 import {getNotifications} from "../services/notifications.service.js";
 import {askZuneAI} from "../services/ai.service.js";
-import {joinChannel,contactSupport} from "../services/whatsapp.service.js";
+import {contactSupport} from "../services/whatsapp.service.js";
 
-const state={session:null,user:null,profile:null,application:null,products:[],cart:[],wishlist:[],orders:[],conversations:[],notifications:[],route:"home",search:"",category:"",authMode:"login"};
+const state={session:null,user:null,profile:null,application:null,products:[],myProducts:[],cart:[],wishlist:[],orders:[],conversations:[],notifications:[],route:"home",search:"",category:"",authMode:"login"};
 const app=document.querySelector("#app");
 const route=()=>{const raw=location.hash.replace(/^#\/?/,"")||"home";const [name,param]=raw.split("/");return {name:name||"home",param};};
 const go=(name,param="")=>{location.hash=`/${name}${param?"/"+encodeURIComponent(param):""}`;};
@@ -41,6 +42,7 @@ async function loadUser(){
 }
 async function loadCore(){
  try{state.products=await getProducts({search:state.search,category:state.category,limit:60});}catch(e){console.warn("products",e);state.products=[];}
+ state.myProducts=state.profile?.role==="vendor"&&state.user?await getProducts({vendorId:state.user.id,includeOutOfStock:true,limit:100}).catch(()=>[]):[];
  if(state.user){const jobs=await Promise.allSettled([getCart(state.user.id),getWishlist(state.user.id),getOrders(state.user.id,state.profile?.role==="vendor"?"vendor":"buyer"),getConversations(state.user.id),getNotifications(state.user.id)]);[state.cart,state.wishlist,state.orders,state.conversations,state.notifications]=jobs.map((j)=>j.status==="fulfilled"?j.value:[]);}
  else {const rawCart=JSON.parse(localStorage.getItem("zune:cart")||"[]");state.cart=rawCart.map(x=>({...x,product:state.products.find(p=>String(p.id)===String(x.product_id))})).filter(x=>x.product);state.wishlist=JSON.parse(localStorage.getItem("zune:wishlist")||"[]");}
 }
@@ -55,9 +57,9 @@ function render(){
  case "categories":content=categoriesPage(state.products,state.category);break;
  case "login":content=authPage("login");break;
  case "signup":content=authPage("signup");break;
- case "account":content=accountPage(state.user,state.profile,state.application);break;
+ case "account":content=accountPage(state.user,state.profile,state.application,{cart:cartCount(),wishlist:state.wishlist.length,orders:state.orders,conversations:state.conversations.length});break;
  case "seller-apply":content=sellerApplyPage(state.application);break;
- case "seller-center":content=state.profile?.role==="vendor"?sellerCenterPage(state.products.filter(p=>p.vendor_id===state.user?.id),state.orders,state.profile):sellerApplyPage(state.application);break;
+ case "seller-center":content=state.profile?.role==="vendor"?sellerCenterPage(state.myProducts,state.orders,state.profile):sellerApplyPage(state.application);break;
  case "cart":content=cartPage(state.cart);break;
  case "checkout":content=checkoutPage(state.cart);break;
  case "orders":content=ordersPage(state.orders);break;
@@ -72,18 +74,24 @@ function render(){
  case "privacy":case "terms":content=legalPage(r.name);break;
  default:content=`<main class="page-wrap"><div class="empty-state"><h3>Ukurasa haujapatikana</h3><button class="btn btn-primary" data-route="home">Rudi Home</button></div></main>`;
  }
- app.innerHTML=header(state.profile,state.search)+content+footer()+bottomNav(r.name);
+ app.innerHTML=header(state.profile,state.search)+content+footer()+bottomNav(r.name,cartCount());
  if(!["login","signup","product","privacy","terms"].includes(r.name)) app.insertAdjacentHTML("beforeend",`<button class="whatsapp-float" data-action="whatsapp-contact">${icon("message-circle",18)} WhatsApp</button>`);
- bindEvents();refreshIcons();
+ bindEvents();bindGuideSliders(app);refreshIcons();
 }
 function requireUser(){if(!state.user){toast("Tafadhali ingia kwanza.");go("login");return false;}return true;}
-async function refresh(){await loadUser();await loadCore();render();}
+async function mergeGuestCart(){
+ if(!state.user)return;
+ try{const rows=JSON.parse(localStorage.getItem("zune:cart")||"[]");if(!rows.length)return;
+  for(const r of rows){await addToCart(state.user.id,r.product_id,r.quantity||1);}
+  localStorage.removeItem("zune:cart");}catch(e){console.warn("guest cart merge",e);}
+}
+async function refresh(){await loadUser();await mergeGuestCart();await loadCore();render();}
 function bindEvents(){
  document.querySelectorAll("[data-route]").forEach(el=>el.addEventListener("click",()=>navRoute(el.dataset.route)));
  document.querySelectorAll("[data-category]").forEach(el=>el.addEventListener("click",()=>{state.category=el.dataset.category;go("categories");loadCore().then(render);}));
  document.querySelectorAll("[data-product]").forEach(el=>el.addEventListener("click",()=>go("product",el.dataset.product)));
- document.querySelectorAll("[data-add-cart]").forEach(el=>el.addEventListener("click",async e=>{e.stopPropagation();try{if(state.user){await addToCart(state.user.id,el.dataset.addCart);state.cart=await getCart(state.user.id);}else{const rows=JSON.parse(localStorage.getItem("zune:cart")||"[]");const found=rows.find(x=>x.product_id===el.dataset.addCart);if(found)found.quantity++;else rows.push({id:"guest-"+Date.now(),product_id:el.dataset.addCart,quantity:1});localStorage.setItem("zune:cart",JSON.stringify(rows));state.cart=rows;}toast("Bidhaa imeongezwa kwenye Cart.");}catch(err){toast(err.message||"Imeshindikana kuongeza bidhaa.","error");}}));
- document.querySelectorAll("[data-wishlist]").forEach(el=>el.addEventListener("click",async e=>{e.stopPropagation();try{if(state.user){await toggleWishlist(state.user.id,el.dataset.wishlist);state.wishlist=await getWishlist(state.user.id);}else{const rows=JSON.parse(localStorage.getItem("zune:wishlist")||"[]");const i=rows.findIndex(x=>x.product_id===el.dataset.wishlist);if(i>=0)rows.splice(i,1);else rows.push({id:"guest-"+Date.now(),product_id:el.dataset.wishlist});localStorage.setItem("zune:wishlist",JSON.stringify(rows));state.wishlist=rows;}toast("Wishlist imesasishwa.");}catch(err){toast(err.message||"Imeshindikana.","error");}}));
+ document.querySelectorAll("[data-add-cart]").forEach(el=>el.addEventListener("click",async e=>{e.stopPropagation();try{if(state.user){await addToCart(state.user.id,el.dataset.addCart);state.cart=await getCart(state.user.id);}else{const rows=JSON.parse(localStorage.getItem("zune:cart")||"[]");const found=rows.find(x=>x.product_id===el.dataset.addCart);if(found)found.quantity++;else rows.push({id:"guest-"+Date.now(),product_id:el.dataset.addCart,quantity:1});localStorage.setItem("zune:cart",JSON.stringify(rows));state.cart=rows;}render();toast("Bidhaa imeongezwa kwenye Cart.");}catch(err){toast(err.message||"Imeshindikana kuongeza bidhaa.","error");}}));
+ document.querySelectorAll("[data-wishlist]").forEach(el=>el.addEventListener("click",async e=>{e.stopPropagation();try{if(state.user){await toggleWishlist(state.user.id,el.dataset.wishlist);state.wishlist=await getWishlist(state.user.id);}else{const rows=JSON.parse(localStorage.getItem("zune:wishlist")||"[]");const i=rows.findIndex(x=>x.product_id===el.dataset.wishlist);if(i>=0)rows.splice(i,1);else rows.push({id:"guest-"+Date.now(),product_id:el.dataset.wishlist});localStorage.setItem("zune:wishlist",JSON.stringify(rows));state.wishlist=rows;}if(state.route==="wishlist")render();toast("Wishlist imesasishwa.");}catch(err){toast(err.message||"Imeshindikana.","error");}}));
  document.querySelectorAll("[data-remove-cart]").forEach(el=>el.addEventListener("click",async()=>{try{if(state.user){await removeCartItem(el.dataset.removeCart,state.user.id);state.cart=await getCart(state.user.id);}else{state.cart=state.cart.filter(x=>x.id!==el.dataset.removeCart);localStorage.setItem("zune:cart",JSON.stringify(state.cart));}render();toast("Bidhaa imeondolewa.");}catch(e){toast(e.message,"error");}}));
  document.querySelectorAll("[data-auth-mode]").forEach(el=>el.addEventListener("click",()=>go(el.dataset.authMode==="signup"?"signup":"login")));
  const authForm=document.querySelector("#auth-form");if(authForm)authForm.addEventListener("submit",handleAuth);
@@ -120,19 +128,45 @@ async function handleSellerApplication(e){
 async function handleProfileSave(e){e.preventDefault();try{state.profile=await updateProfile(state.user.id,Object.fromEntries(new FormData(e.currentTarget).entries()));toast("Taarifa zimehifadhiwa.");render();}catch(err){toast(err.message||"Imeshindikana kuhifadhi taarifa.","error");}}
 async function handleCheckout(e){
  e.preventDefault();if(!requireUser())return;const delivery=Object.fromEntries(new FormData(e.currentTarget).entries());
- try{for(const item of state.cart){const p=item.products||item.product||resolveProduct(item.product_id);if(!p)continue;await placeOrder(state.user.id,p,item.quantity||1,delivery);}await clearCart(state.user.id);state.cart=[];await refresh();toast("Oda yako imetumwa. Malipo yataunganishwa baadaye.");go("orders");}
- catch(err){toast(err.message||"Oda haikutumwa. Hakikisha taarifa zako.","error");}
+ const btn=e.currentTarget.querySelector("button[type=submit]");if(btn){btn.disabled=true;}
+ let placed=0;
+ try{
+  for(const item of [...state.cart]){const p=item.products||item.product||resolveProduct(item.product_id);if(!p)continue;
+   await placeOrder(state.user.id,p,item.quantity||1,delivery);
+   await removeCartItem(item.id,state.user.id);placed++;}
+  await refresh();toast("Oda yako imetumwa. Malipo yataunganishwa baadaye.");go("orders");
+ }catch(err){
+  if(placed>0){await refresh();toast(`Oda ${placed} zimetumwa, nyingine imeshindikana: ${err.message||"jaribu tena"}. Angalia Oda zangu kabla ya kujaribu tena.`,"error");}
+  else{toast(err.message||"Oda haikutumwa. Hakikisha taarifa zako.","error");}
+  if(btn)btn.disabled=false;
+ }
 }
-async function handleAI(e){e.preventDefault();const f=new FormData(e.currentTarget);const q=String(f.get("question")||"").trim();if(!q)return;const box=document.querySelector("#ai-chat");box.insertAdjacentHTML("beforeend",`<div class="chat-bubble mine">${escapeHTML(q)}</div>`);e.currentTarget.reset();const reply=await askZuneAI(q);box.insertAdjacentHTML("beforeend",`<div class="chat-bubble">${escapeHTML(reply)}</div>`);box.scrollTop=box.scrollHeight;}
+async function handleAI(e){
+ e.preventDefault();const form=e.currentTarget;const q=String(new FormData(form).get("question")||"").trim();if(!q)return;
+ const box=document.querySelector("#ai-chat");box.insertAdjacentHTML("beforeend",`<div class="chat-bubble mine">${escapeHTML(q)}</div><div class="chat-bubble" id="ai-pending">...</div>`);form.reset();box.scrollTop=box.scrollHeight;
+ let reply;try{reply=await askZuneAI(q);}catch(err){reply="Samahani, ZUNE AI imeshindwa kujibu sasa. Jaribu tena.";}
+ const pending=document.querySelector("#ai-pending");if(pending){pending.textContent=reply;pending.removeAttribute("id");}box.scrollTop=box.scrollHeight;
+}
 async function handleAction(action){
  if(action==="logout"){try{await signOut();state.user=null;state.session=null;state.profile=null;toast("Umetoka kwenye akaunti.");await refresh();go("home");}catch(e){toast(e.message,"error");}}
  if(action==="forgot-password"){const m=modal("Rejesha Password",`<form id="reset-form"><div class="field"><label>Email yako</label><input name="email" type="email" required></div><button class="btn btn-primary" style="margin-top:14px;width:100%">Tuma kiungo cha reset</button></form>`);m.el.querySelector("#reset-form").addEventListener("submit",async e=>{e.preventDefault();try{await resetPassword(new FormData(e.currentTarget).get("email"));m.close();toast("Angalia email yako kwa kiungo cha reset.");}catch(err){toast(err.message,"error");}});}
  if(action==="add-product"){if(!requireUser())return;const m=modal("Ongeza Bidhaa",`<form id="add-product-form" class="form-grid"><div class="field full"><label>Jina la bidhaa</label><input name="title" required></div><div class="field"><label>Bei (TZS)</label><input name="price" type="number" min="1" required></div><div class="field"><label>Stock</label><input name="stock_quantity" type="number" min="0" value="1" required></div><div class="field"><label>Category</label><select name="category">${window.ZUNE_CONFIG.categories.map(c=>`<option>${escapeHTML(c.name)}</option>`).join("")}</select></div><div class="field"><label>Picha URL (hiari)</label><input name="image_url" type="url"></div><div class="field full"><label>Maelezo</label><textarea name="description"></textarea></div><div class="field full"><button class="btn btn-primary">Hifadhi Bidhaa</button></div></form>`);m.el.querySelector("form").addEventListener("submit",async e=>{e.preventDefault();try{await createProduct(state.user.id,Object.fromEntries(new FormData(e.currentTarget).entries()));m.close();await refresh();toast("Bidhaa imeongezwa.");}catch(err){toast(err.message||"Hifadhi imeshindikana.","error");}});}
+ if(action==="change-password")showNewPasswordModal();
+ if(action==="logout-all"){if(!confirm("Utatoka kwenye vifaa vyote. Endelea?"))return;try{await signOutAll();state.user=null;state.session=null;state.profile=null;toast("Umetoka kwenye vifaa vyote.");await refresh();go("home");}catch(e){toast(e.message||"Imeshindikana.","error");}}
+ if(action==="copy-zune-id"){const id=state.profile?.zune_id;if(id){try{await navigator.clipboard.writeText(id);toast("ZUNE ID imenakiliwa.");}catch{toast("Imeshindikana kunakili.","error");}}}
+ if(action==="share-app"){const data={title:"ZUNE Marketplace",text:"Nunua na uza kwa urahisi kupitia ZUNE Marketplace.",url:location.origin+location.pathname};try{if(navigator.share)await navigator.share(data);else{await navigator.clipboard.writeText(data.url);toast("Kiungo kimenakiliwa.");}}catch(e){if(e?.name!=="AbortError")toast("Imeshindikana kushiriki.","error");}}
+ if(action==="delete-account"){if(!confirm("Ombi la kufuta akaunti litatumwa kwa timu ya ZUNE kupitia WhatsApp. Endelea?"))return;contactSupport(`Habari ZUNE, naomba kufutiwa akaunti yangu (${state.user?.email||"email"}).`);}
  if(action==="whatsapp-contact")contactSupport();
 }
+function showNewPasswordModal(){
+ const m=modal("Weka Password Mpya",`<form id="new-password-form"><div class="field"><label>Password mpya (angalau herufi 8)</label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div><button class="btn btn-primary" style="margin-top:14px;width:100%">Hifadhi Password</button></form>`);
+ m.el.querySelector("#new-password-form").addEventListener("submit",async e=>{e.preventDefault();try{await updatePassword(new FormData(e.currentTarget).get("password"));m.close();toast("Password imebadilishwa.");}catch(err){toast(err.message||"Imeshindikana kubadilisha password.","error");}});
+}
 async function init(){
+ const authHash=/access_token=|error_description=|type=recovery/.test(location.hash);
  await refresh();
- onAuthChange(async session=>{state.session=session;state.user=session?.user||null;await refresh();});
+ if(authHash)history.replaceState(null,"",location.pathname+location.search+"#/account");
+ onAuthChange(async(session,event)=>{state.session=session;state.user=session?.user||null;await refresh();if(event==="PASSWORD_RECOVERY")showNewPasswordModal();});
  window.addEventListener("hashchange",async()=>{const r=route();if(r.name==="product"&&!resolveProduct(decodeURIComponent(r.param))){await loadCore();}render();});
  if(!location.hash)history.replaceState(null,"",location.pathname+location.search+"#/home");
  render();
