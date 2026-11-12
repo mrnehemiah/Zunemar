@@ -8,13 +8,14 @@ const demoProducts=[
 {id:"d5",title:"Kiti cha Kisasa",description:"Kiti cha nyumbani chenye muundo safi na comfort.",price:185000,stock_quantity:4,category:"Furniture",image_url:"https://images.unsplash.com/photo-1503602642458-232111445657?w=900",vendor_id:"store4",store_name:"Home Style",verified:false},
 {id:"d6",title:"Skincare Essentials",description:"Seti ya skincare kwa matumizi ya kila siku.",price:42000,stock_quantity:20,category:"Beauty",image_url:"https://images.unsplash.com/photo-1608248543803-ba4f8c70ae0b?w=900",vendor_id:"store5",store_name:"Glow Shop",verified:true}
 ];
-export async function getProducts({search="",category="",limit=40,sort="newest"}={}){
+export async function getProducts({search="",category="",limit=40,sort="newest",vendorId="",includeOutOfStock=false}={}){
  if(!supabase){let rows=listDemo("products");if(!rows.length)rows=demoProducts;const term=String(search||"").trim().toLowerCase();
-  const filtered=rows.filter(p=>(!category||p.category===category)&&(!term||[p.title,p.description,p.category,p.store_name].join(" ").toLowerCase().includes(term)));
+  const filtered=rows.filter(p=>(!vendorId||p.vendor_id===vendorId)&&(!category||p.category===category)&&(!term||[p.title,p.description,p.category,p.store_name].join(" ").toLowerCase().includes(term)));
   if(sort==="price-asc")filtered.sort((a,b)=>Number(a.price)-Number(b.price));
   if(sort==="price-desc")filtered.sort((a,b)=>Number(b.price)-Number(a.price));
   return filtered.slice(0,Math.max(1,Math.min(100,Number(limit)||40)));}
- let q=supabase.from("products").select("id,vendor_id,title,description,price,stock_quantity,image_url,created_at,category,is_featured,is_deal,discount_percent,image_urls").gt("stock_quantity",0).order("created_at",{ascending:false}).limit(limit);
+ let q=supabase.from("products").select("id,vendor_id,title,description,price,stock_quantity,image_url,created_at,category,is_featured,is_deal,discount_percent,image_urls").order("created_at",{ascending:false}).limit(Math.max(1,Math.min(100,Number(limit)||40)));
+ if(!includeOutOfStock)q=q.gt("stock_quantity",0);if(vendorId)q=q.eq("vendor_id",vendorId);
  if(category)q=q.eq("category",category);if(search){
   const term=String(search).trim().replace(/[%,()]/g," ").slice(0,80);
   if(term)q=q.or(`title.ilike.%${term}%,description.ilike.%${term}%,category.ilike.%${term}%`);
@@ -26,7 +27,13 @@ export async function getProducts({search="",category="",limit=40,sort="newest"}
  let profiles={};if(ids.length){const {data:owners}=await supabase.from("profiles").select("id,full_name,role,is_verified,vendor_code").in("id",ids);(owners||[]).forEach(p=>profiles[p.id]=p);}
  return (data||[]).map(p=>({...p,store_name:profiles[p.vendor_id]?.full_name||"Duka la ZUNE",verified:profiles[p.vendor_id]?.role==="vendor" && !!profiles[p.vendor_id]?.is_verified}));
 }
-export async function getProduct(id){const all=await getProducts({limit:100});return all.find(p=>String(p.id)===String(id))||null;}
+export async function getProduct(id){
+ if(!supabase){const rows=listDemo("products");return (rows.length?rows:demoProducts).find(p=>String(p.id)===String(id))||null;}
+ const {data,error}=await supabase.from("products").select("id,vendor_id,title,description,price,stock_quantity,image_url,created_at,category,is_featured,is_deal,discount_percent,image_urls").eq("id",id).maybeSingle();
+ if(error)throw error;if(!data)return null;
+ const {data:owner}=await supabase.from("profiles").select("id,full_name,role,is_verified").eq("id",data.vendor_id).maybeSingle();
+ return {...data,store_name:owner?.full_name||"Duka la ZUNE",verified:owner?.role==="vendor"&&!!owner?.is_verified};
+}
 export async function createProduct(userId,product){
  if(!supabase){const rows=listDemo("products");const item={...product,id:"local-"+Date.now(),vendor_id:userId,verified:false,store_name:"Duka Langu"};setDemo("products",[item,...rows]);return item;}
  const payload={vendor_id:userId,title:product.title,description:product.description,price:Number(product.price),stock_quantity:Number(product.stock_quantity),image_url:product.image_url||null,category:product.category||"Vingine"};

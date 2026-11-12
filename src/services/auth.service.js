@@ -15,4 +15,6 @@ export async function signIn({email,password}){
 }
 export async function signOut(){if(supabase){const {error}=await supabase.auth.signOut();if(error)throw error;}clearDemo("session");clearDemo("profile");}
 export async function resetPassword(email){if(!supabase) return true;const {error}=await supabase.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname+"#/account"});if(error)throw error;return true;}
-export function onAuthChange(callback){if(!supabase)return ()=>{};const {data}=supabase.auth.onAuthStateChange((_event,session)=>callback(session));return ()=>data.subscription.unsubscribe();}
+export async function updatePassword(password){if(!supabase)return true;const {error}=await supabase.auth.updateUser({password});if(error)throw error;return true;}
+export async function signOutAll(){if(supabase){const {error}=await supabase.auth.signOut({scope:"global"});if(error)throw error;}clearDemo("session");clearDemo("profile");}
+export function onAuthChange(callback){if(!supabase)return ()=>{};const {data}=supabase.auth.onAuthStateChange((_event,session)=>callback(session,_event));return ()=>data.subscription.unsubscribe();}
