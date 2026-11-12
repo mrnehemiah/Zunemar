@@ -1,6 +1,6 @@
 {
   "name": "zune-marketplace",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "release": "premium-modern-reorganized",
   "module_system": "native-es-modules",
   "source_root": "src",
