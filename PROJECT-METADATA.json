@@ -1,0 +1,11 @@
+{
+  "name": "zune-marketplace",
+  "version": "2.0.0",
+  "release": "premium-modern-reorganized",
+  "module_system": "native-es-modules",
+  "source_root": "src",
+  "entrypoint": "src/app/app.js",
+  "supabase_schema_modified": false,
+  "payments_enabled": false,
+  "marketplace_admin_ui": false
+}
